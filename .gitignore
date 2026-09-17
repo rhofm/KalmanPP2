@@ -1,12 +1,19 @@
-.ipynb_checkpoints/*
+# Checkpoints and Cache
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+__pycache__/
+*/__pycache__/
+
+# Old or moved files and test files
 Assignment5.ipynb
 Assignment5.py
 Assignment5_Lorenz.py
 Ass5_Lorenz.ipynb
-/notebooks/.ipynb_checkpoints/
+Test.ipynb
+
+# Other files
 /Psychophysics2.egg-info/dependency_links.txt
 /Psychophysics2.egg-info/PKG-INFO
 /Psychophysics2.egg-info/SOURCES.txt
 /Psychophysics2.egg-info/top_level.txt
 *.pdf
-Test.ipynb
