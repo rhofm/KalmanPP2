@@ -86,6 +86,8 @@ class Wilson_Cowan():
         #                ])
         #self.n,self.p = self.u0.shape
 
+        np.random.seed(3)
+
     #def kalmanwc_obs(self,x,dq):
     def kalmanwc_obs(self,x):
         # we only observe the u's, not the recovery variables, just like the FN case 
@@ -267,11 +269,11 @@ class Wilson_Cowan():
             #self.Pxx = block_diag(Q, self.R, self.R) 
             Pxx = block_diag(Q, R, R) 
             
-            np.random.seed(3)
+            #np.random.seed(3)
             self.y = np.zeros((self.dy, self.N))
             #self.y[:,0] = obsfct(self.x[:, 0], dq) + (sqrtm(self.R) @ np.random.randn(dy, 1)).ravel()  # noisy data
             self.y[:,0] = obsfct(self.x[:, 0]) + (sqrtm(R) @ np.random.randn(self.dy, 1)).ravel()  # noisy data
-            np.random.seed(0)  # Not using this - set state above
+            #np.random.seed(0)  # Not using this - set state above
             self.Energy_y[0] = np.sum(self.y[:, t] ** 2)  # y
             self.Energy_yhat[0] = np.sum(self.yhat[:, t] ** 2)  # y
             
