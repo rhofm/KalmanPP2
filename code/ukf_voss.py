@@ -78,9 +78,9 @@ class UKFModel(object):
 	"""A class representing a model for a  Unscented Kalman Filter.
 
 	Attributes:
-	    Q_par (float): Initial value for parameter covariance.
-	    Q_var (float): Initial value for variable covariance.
-	    R (ndarray): Observation covariance.
+		Q_par (float): Initial value for parameter covariance.
+		Q_var (float): Initial value for variable covariance.
+		R (ndarray): Observation covariance.
 	"""
 	def __init__(self):
 		self.Q_par = 0.1  # initial value for parameter covariance
@@ -143,6 +143,8 @@ class UKFVoss(object):
 		self.R = model.R
 		self.Pxx = None
 		self.Ks = None
+		self.K_cors = None
+		self.chi2s = None
 		self.errors = None
 		self.x_hat = None
 		self.current_time = 0
@@ -243,10 +245,13 @@ class UKFVoss(object):
 			Pxy += np.outer((X[:, i] - x_tilde), (Y[:, i] - y_tilde)) / N
 
 		K = np.dot(Pxy, np.linalg.inv(Pyy))  # same as K = np.dot(Pxy, np.linalg.inv(Pyy))
-		x_hat = x_tilde + np.dot(K, (y - y_tilde))
+		K_cor = np.dot(K, (y-y_tilde))
+		nu = y - y_tilde
+		chi2 = float(nu @ np.linalg.solve(Pyy,nu))
+		x_hat = x_tilde + K_cor #np.dot(K, (y - y_tilde))
 		Pxx = Pxx - np.dot(K, Pxy.T)
 		Pxx = (Pxx + Pxx.T) / 2.
-		return x_hat, Pxx, K
+		return x_hat, Pxx, K, K_cor, chi2
 
 	def filter(self, y, initial_condition=None, disable_progress=False, run_until=None):
 		"""
@@ -279,6 +284,12 @@ class UKFVoss(object):
 		if self.Ks is  None:
 			self.Ks = np.zeros((self.dx, self.dy, self.ll))  # Kalman gains
 
+		if self.K_cors is  None:
+			self.K_cors = np.zeros((self.dx, self.ll))  # Kalman corrections
+
+		if self.chi2s is None:
+			self.chi2s = np.zeros((self.ll))
+
 		# Variables for the estimation
 		if self.errors is None:
 			self.errors = np.zeros((self.dx, self.ll))
@@ -286,7 +297,7 @@ class UKFVoss(object):
 
 		# Main loop for recursive estimation
 		for k in tqdm.tqdm(range(self.current_time+1, run_until+1), disable=disable_progress):
-			self.x_hat[:, k], self.Pxx[:, :, k], self.Ks[:, :, k] = (
+			self.x_hat[:, k], self.Pxx[:, :, k], self.Ks[:, :, k], self.K_cors[:, k], self.chi2s[k] = (
 				self.unscented_transform(self.x_hat[:, k - 1], self.Pxx[:, :, k - 1], y[:, k], self.R))
 			# Pxx[0, 0, k] = self.model.Q_par
 			self.Pxx[:, :, k] = self.covariance_postprocessing(self.Pxx[:, :, k])
@@ -314,12 +325,12 @@ class UKFVoss(object):
 		Calculates the statistical errors and chi-squared value.
 
 		Args:
-		    x (optional): The true values. If provided, the chi-squared value will be calculated using
-		    the predicted values and the true values.
+			x (optional): The true values. If provided, the chi-squared value will be calculated using
+			the predicted values and the true values.
 
 		Returns:
-		    errors: A numpy array of shape (dx, ll) containing the statistical errors for each parameter at each time step.
-		    chisq: The chi-squared value if `x` is provided, None otherwise.
+			errors: A numpy array of shape (dx, ll) containing the statistical errors for each parameter at each time step.
+			chisq: The chi-squared value if `x` is provided, None otherwise.
 		"""
 		errors = np.zeros((self.dx, self.ll))
 		for k in range(self.ll):
@@ -598,6 +609,141 @@ class FNNature(NatureSystem):
 		z = (np.arange(self.ll) / 250) * 2 * np.pi
 		z = -0.4 - 1.01 * np.abs(np.sin(z / 2))
 		self.p[0, :] = z
+
+	def observations(self, from_ix=None, to_ix=None):
+		"""
+		Calculates the observations based on the system's state and noise.
+
+		:return: None
+		"""
+		print("in observations")
+		if from_ix is None:
+			from_ix = self.current_time
+		if to_ix is None:
+			to_ix = self.ll
+		self.R = self.R0 ** 2 * np.var(self.x0[0, :])
+		self.y[0, from_ix:to_ix] = self.x0[0, from_ix:to_ix] + np.sqrt(self.R) * np.random.randn(to_ix-from_ix)
+
+
+class LorModel(UKFModel):
+	def __init__(self, s=10., b=8./3., r=46., Q_par=0.015, Q_var=np.array((1.,)), R=1.):
+		"""
+		Initializes an instance of the LorModel class.
+
+		:param s: a float representing the value of parameter sigma (default 10.)
+		:param b: a float representing the value of parameter b (default 8./3/)
+		:param r: a float representing the value of parameter r (default 46.)
+		:param Q_par: a float representing the initial value for parameter covariance (default 0.015)
+		:param Q_var: a numpy array representing the initial value for variable covariance (default np.array((1.,)))
+		:param R: a float representing the observation covariance (default 1.0)
+		"""
+		super(LorModel, self).__init__()
+		self.s = s
+		self.b = b
+		self.r = r
+		self.Q = 0.015
+		self.Q_par = Q_par  # initial value for parameter covariance
+		self.Q_var = Q_var  # # initial value for variable covariance
+		self.R = np.atleast_2d(R)  # observation covariance
+
+	def f_model(self, x, p):
+		"""
+		:param x: the input array
+		:param p: the input array
+		:return: a 2D array containing computed values based on the input arrays
+
+		This method takes in two parameters, `x` and `p`, which are arrays. It computes and returns a 2D array of values
+		based on the given formulas.
+
+		The parameter `x` represents an input array.
+		The parameter `p` represents an input array.
+
+		The return value is a 2D array containing computed values based on the input arrays `x` and `p`.
+		"""
+		s, b, r = self.s, self.b, self.r
+		# p = p.ravel()
+		x = np.atleast_2d(x)
+		# return np.array([c * (x[1,:] + x[0,:] - x[0,:]**3 / 3 + p), -(x[0,:] - a + b * x[1,:]) / c])
+		rr = [np.atleast_2d(s * (x[1] - x[0])), np.atleast_2d(r * (x[0]) - (x[1] + x[0]*x[2])), np.atleast_2d(x[0]*x[1] - b*x[2])]
+		# print(rr)
+		return np.vstack(rr)
+
+	def obs_g_model(self, x):
+		"""
+		:param x: A 2-dimensional array representing the input data. The array should have shape (n, m),
+		where n is the number of samples and m is the number of features.
+		:return: A 1-dimensional array representing the observations (in this case the membrane potential variables).
+		The array will have shape (m,) where m is the number of features.
+		"""
+		return x[0, :]
+
+	def n_params(self):
+		"""
+		Returns the number of parameters.
+
+		:return: The number of parameters.
+		:rtype: int
+		"""
+		return 3
+
+	def n_variables(self):
+		"""
+		Returns the number of variables.
+
+		:return: The number of variables defined in the method.
+		:rtype: int
+		"""
+		return 3
+
+	def n_observables(self):
+		"""
+		Returns the number of observables.
+
+		:return: Number of observables.
+		:rtype: int
+		"""
+		return 1
+
+
+class LorNature(NatureSystem):
+	"""
+	The `LorNature` class represents a nature for the Lorenz model.
+	It inherits from the `NatureSystem` class.
+
+	Attributes:
+		s (float): Parameter 'sigma' for the LorNature model.
+		b (float): Parameter 'b' for the LorNature model.
+		r (float): Parameter 'r' for the LorNature model.
+		R0 (float): Initial value of R for the LorNature model.
+		R (float): Current value of R for the LorNature model.
+		x0 (ndarray): The state vector of the nature system.
+		y (ndarray): The observed states of the nature system.
+		p (ndarray): The set of parameters for the nature system.
+
+	Methods:
+		system(self, x): Calculates the new state of the system based on the current state 'x'.
+		observations(self): Generates the observations based on the current state and noise.
+	"""
+	def __init__(self, ll, dT, dt, s=10, b=8/3, r=46, R0=0.2, initial_condition: np.ndarray | None = None):
+		if initial_condition is None:
+			initial_condition = np.array([1., 1., 1.])
+		super(LorNature, self).__init__(ll, dT, dt, 3,1,1, initial_condition)
+
+		self.s = s
+		self.b = b
+		self.r = r
+		self.R0 = R0
+		self.R = R0
+		print("initializing nature system")
+		self.integrateRK4()
+		self.observations(from_ix=0, to_ix=ll)
+
+	def system(self, x, p):
+		"""
+		x is the state of the system
+		p is a parameter, that is absent in the Lorenz model, but needed for the NatureSystem
+		"""
+		return np.array([self.s * (x[1] - x[0]), self.r * (x[0]) - (x[1] + x[0]*x[2]), x[0]*x[1] - self.b*x[2]])
 
 	def observations(self, from_ix=None, to_ix=None):
 		"""
