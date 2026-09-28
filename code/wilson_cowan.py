@@ -9,14 +9,14 @@ class Wilson_Cowan():
                  q = 2, 
                  Threshold = .1, 
                  numsteps = 200, 
-                 B = 1000, 
-                 C = 15, 
+                 B = 10,#1000, 
+                 C = 3,#15, 
                  g = 8, 
                  f = 8, 
-                 K = 10, 
-                 k = .05, 
+                 K = 1.38,#10, 
+                 k = .91,#.05, 
                  dt = .001, 
-                 tau = .01, 
+                 tau = 4.85,#.01, 
                  #u0 = None, 
                  #a0 = None, 
                  NoiseFactor = 10, 
@@ -53,6 +53,7 @@ class Wilson_Cowan():
         self.dq = dq
         self.dx = self.dq + 2 * self.f * self.g
         self.dy = self.f * self.g
+        self.z_base = .24
         
         # Initial conditions for u and a
         self.u0 = np.zeros((self.g,self.f))
@@ -213,7 +214,7 @@ class Wilson_Cowan():
 
     #def main(self, dq, G = -0.0006, dx = None, dy = None, Q = 0.0001, fct = None, obsfct = None):
     #def main(self, G = -0.0006, Q = 0.0001, fct = None, obsfct = None):
-    def main(self, G = -0.0006, Q = 0.0001):
+    def main(self, G = -0.0006, Q = 0.0001, ControlSource = 'yhat'):
         #if not dx: dx = dq + 2*self.f*self.g
         #if not dy: dy = self.f*self.g
         #if not fct: fct = self.kalmanwc_fct
@@ -240,7 +241,7 @@ class Wilson_Cowan():
             self.x0[:,0] = np.concatenate((self.u.flatten(), self.a.flatten()))
         
             # External input, estimated as parameter p(5) later on:
-            self.z = np.ones((1,self.N)) * 0.24
+            self.z = np.ones((1,self.N)) * self.z_base
             self.x[:,0] = np.concatenate((self.z[:,0], self.x0[:,0]))
         
             t = 0  # initialize
@@ -256,6 +257,7 @@ class Wilson_Cowan():
             self.Energy_y = np.zeros(self.N)
             self.Energy_yhat = np.zeros(self.N)
             self.uEnergy_yhat = np.zeros((self.N,))
+            self.uEnergy_y = np.zeros((self.N,))
         
             tempx = self.x[:, :1] * np.ones((1, self.N))
             if t > 1:
@@ -280,13 +282,22 @@ class Wilson_Cowan():
             for t in tqdm(range(1, self.N)):
                 xx = self.x0[:, t - 1]  # Pick column (at start, only 1 column of initial conditions)
                 if t >= self.ControlTime:
-                    self.uVector_yhat = Gain * self.yhat[:, t - 1]
-                    self.uEnergy_yhat[t] = self.uVector_yhat.T @ self.uVector_yhat
-                    self.ControlVector_yhat = np.concatenate([self.uVector_yhat, np.zeros((self.f * self.g,))])
-                    xx = xx + self.ControlVector_yhat
-                    self.xhat[:, t - 1] = self.xhat[:, t - 1] + np.concatenate([np.array((0,)), self.ControlVector_yhat])
+                    if ControlSource == 'yhat':
+                        self.uVector_yhat = Gain * self.yhat[:, t - 1]
+                        self.uEnergy_yhat[t] = self.uVector_yhat.T @ self.uVector_yhat
+                        self.ControlVector_yhat = np.concatenate([self.uVector_yhat, np.zeros((self.f * self.g,))])
+                        xx = xx + self.ControlVector_yhat
+                        self.xhat[:, t - 1] = self.xhat[:, t - 1] + np.concatenate([np.array((0,)), self.ControlVector_yhat])
+                    elif ControlSource == 'y':
+                        self.uVector_y = Gain * self.y[:, t - 1]
+                        self.uEnergy_y[t] = self.uVector_y.T @ self.uVector_y
+                        self.ControlVector_y = np.concatenate([self.uVector_y, np.zeros((self.f * self.g,))])
+                        xx = xx + self.ControlVector_y
+                        self.xhat[:, t - 1] = self.xhat[:, t - 1] + np.concatenate([np.array((0,)), self.ControlVector_y])
+                        self.uEnergy_yhat[t] = 0
                 else:
                     self.uEnergy_yhat[t] = 0  # no control yet
+                    self.uEnergy_y[t] = 0
         
                 for i in range(self.nn):  # nn determines how many times to loop the RK - can use 1
                     k1 = self.dt * self.kalmanwc_int(xx, self.z[:, t - 1])  # feed a col of x and a value of z
@@ -317,3 +328,55 @@ class Wilson_Cowan():
                 self.Energy_yhat[t] = np.sum(self.yhat[:, t] ** 2)  # y
                 #self.errors[:, t] = np.sqrt(np.diag(self.Pxx[:, :]))
                 self.errors[:, t] = np.sqrt(np.diag(Pxx[:, :]))
+
+            if WithControl == 1: #Saving the uncontrolled parameters, to compare
+                self.y_nocontrol    = self.y.copy()
+                self.x_nocontrol    = self.x.copy()
+                self.xhat_nocontrol = self.xhat.copy()
+                self.yhat_nocontrol = self.yhat.copy()
+
+## Subclass for ex6.3
+class Fitzhugh_Nagumo(Wilson_Cowan):
+    #u => x; a => y
+    def __init__(self, A=.7, B =.8, C = 3, K = 1.38, k = .91, **kwargs):
+        super().__init__(B=B, C=C, K=K, k=k, **{key: val for key, val in kwargs.items()})
+        self.A = A
+
+    def fc(self,x,p1):
+        Rows, Columns = x.shape
+        self.w = np.zeros((Rows, Columns))
+
+        for col in range(Columns):
+            self.u = x[0:self.f*self.g, col].reshape((self.f, self.g))   # FHN's x (activity)
+            self.a = x[self.f*self.g:2*self.f*self.g, col].reshape((self.f, self.g))  # FHN's y (recovery)
+            p = np.concatenate(([self.K, self.C, self.B, self.A], p1[:, col]))  # [K, c, b, a, z]
+
+            self.ue = np.pad(self.u, ((self.q, self.q), (self.q, self.q)), mode='constant')
+            self.integ = np.zeros((self.f, self.g))
+            for i in range(-self.q, self.q + 1):
+                for j in range(-self.q, self.q + 1):
+                    self.integ += p[0] * np.exp(-self.k * (i**2 + j**2)) * (self.ue[i+self.q:i+self.f+self.q, j+self.q:j+self.g+self.q] > p[4])
+            self.integ -= p[0] * (self.u > p[4])          # network coupling — unchanged
+
+            self.udot = p[1] * (self.a + self.u - self.u**3/3 + self.integ)      # xdot = c*(y+x-x^3/3+I)
+            self.adot = -(self.u - p[3] + p[2]*self.a) / p[1]                     # ydot = -(x-a+b*y)/c
+
+            self.w[:, col] = np.concatenate([self.udot.flatten(), self.adot.flatten()])
+        return self.w
+
+    def kalmanwc_int(self,x,z):
+        u = np.reshape(x[:self.f*self.g], (self.f, self.g))
+        a = np.reshape(x[self.f*self.g:2*self.f*self.g], (self.f, self.g))
+        p = [self.K, self.C, self.B, self.A, z]
+
+        ue = np.concatenate((np.zeros((self.g, self.q)), u, np.zeros((self.g, self.q))), axis=1)
+        ue = np.concatenate((np.zeros((self.q, self.f + 2*self.q)), ue, np.zeros((self.q, self.f + 2*self.q))), axis=0)
+        integ = np.zeros((self.f, self.g))
+        for i in range(-self.q, self.q + 1):
+            for j in range(-self.q, self.q + 1):
+                integ += p[0] * np.exp(-self.k * (i**2 + j**2)) * (ue[i+self.q:i+self.f+self.q, j+self.q:j+self.g+self.q] > p[4])
+        integ -= p[0] * (u > p[4])
+
+        udot = p[1] * (a + u - u**3/3 + integ)
+        adot = -(u - p[3] + p[2]*a) / p[1]
+        return np.concatenate((udot.flatten(), adot.flatten()))
